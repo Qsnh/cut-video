@@ -1,6 +1,6 @@
 # Running the editor
 
-Use paths relative to the skill directory in these commands. Python 3, NumPy, FFmpeg and FFprobe run the cut and color steps. Burn-in uses Pillow and a local font containing the caption characters. Candidate discovery additionally uses the Python package openai-whisper, PyTorch and a local multilingual Whisper checkpoint for Chinese. An existing word-timed transcript can also supply the candidate list.
+Use paths relative to the skill directory in these commands. Python 3, NumPy, FFmpeg 4.4 or later and FFprobe run the cut and color steps. Burn-in uses Pillow and a local font containing the caption characters. Candidate discovery additionally uses the Python package openai-whisper, PyTorch and a local multilingual Whisper checkpoint for Chinese. An existing word-timed transcript can also supply the candidate list.
 
 ## Find and review possible fillers
 
@@ -72,7 +72,14 @@ Before encoding, the renderer stops and names any caption character the font has
 
 Boxed styles stay readable over any background. Outline and shadow styles cover less of the picture but depend on the stroke, so check them against bright clothing and backgrounds. To compare styles, render the same short temporary plan once per style and inspect the frames with the actual speaker.
 
-The renderer splits chronological cuts into runs of at most 90 intervals, because FFmpeg's expression evaluator rejects a `select` with more than 100 `between()` terms and reports the size limit as `Cannot allocate memory`. A full-talk cleanup of a ten-minute recording commonly needs more, so keep the plan as one flat chronological list and let the renderer chunk it. Each run is encoded separately and joined, and every part is checked for its frame count.
+`--speed` plays the whole delivered cut faster or slower, from 0.5 to 5, at the plan's frame rate. A fraction such as `4/3` is accepted. The voice keeps its pitch, and frames are dropped or repeated to hold the delivery rate. FFmpeg's `atempo` skips samples rather than blending them above 2, so a faster speed is split into equal stages of at most 2. Keep the plan and any `--source-srt` or `--edited-srt` on the normal-speed timeline; the renderer rescales the cues and writes the sidecar for the delivered speed. Omitting it, or passing 1, renders exactly as before.
+
+```sh
+python3 scripts/cut_video.py input.MOV plan.json fast.mp4 --speed 1.25 \
+  --source-srt source.srt --burn-font /path/to/ChineseFont.ttc --font-index 1
+```
+
+The renderer splits chronological cuts into runs of at most 90 intervals, because FFmpeg's expression evaluator rejects a `select` with more than 100 `between()` terms and reports the size limit as `Cannot allocate memory`. A full-talk cleanup of a ten-minute recording commonly needs more, so keep the plan as one flat chronological list and let the renderer chunk it. Each run is encoded separately and joined, and every part is checked for its frame count. A part of one or two frames has no B-frames, so the join renumbers decode timestamps evenly across all parts; otherwise a constant-frame-rate transcode would repeat frames there.
 
 The renderer targets square-pixel phone footage with a playable first audio track and produces H.264/AAC SDR video. It keeps the displayed orientation and frame dimensions of common even-sized phone recordings. If an input needs a different dialogue track, HDR delivery, PQ tone mapping or a different layout, adapt the FFmpeg workflow to that source. To try two HLG exposures, render a short representative plan into separate preview files with `--hlg-strength 2.6` and `--hlg-strength 2.0`. The lower value gives a darker result. Use the approved setting for the final encode. Each render checks that the entire output decodes.
 

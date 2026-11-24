@@ -9,6 +9,7 @@
 - **去语气词**：保留完整内容，只剪掉「嗯、呃、啊」、um、uh 和多余停顿。剪完会重新识别一遍并核对字数，确认没误删内容。
 - **加字幕**：生成跟剪辑后语音对齐的字幕，输出 SRT 文件，也可以直接烧进画面（位置按竖屏设计，在人脸下方）。烧录字幕有 6 种样式可选：半透明深色底框（默认）、白底黑字、黄底黑字、白字黑描边、黄字黑描边、白字投影；字体也可以换成你自己的，字体里缺字时会在渲染前提示。
 - **修正 iPhone 过曝**：iPhone 拍的 HDR（HLG）视频看起来发白、过亮，可以转成正常亮度的 SDR，亮度可调。
+- **倍速**：整条视频按 0.5–5 倍加速或放慢，声音保持原来的音调，字幕时间同步缩放。2 倍以上更像快进，适合展示过程，字幕会一闪而过。
 - **开头放钩子**：把你指定的金句或观点挪到视频开头。
 - **剪精华版**：你要求时才剪，默认保留整段内容。
 
@@ -30,7 +31,7 @@
 
 | 用途 | 依赖 |
 | --- | --- |
-| 必需 | Python 3、NumPy、FFmpeg（含 ffprobe） |
+| 必需 | Python 3、NumPy、FFmpeg 4.4 或更新版本（含 ffprobe） |
 | 找语气词 | openai-whisper、PyTorch、本地 Whisper 模型（中文建议 `small` 或更大） |
 | 字幕烧进画面 | Pillow、一款含中文字形的字体（macOS 自带 `STHeiti Medium.ttc`，也可以换成任意 TTF / OTF / TTC 字体） |
 
@@ -69,6 +70,8 @@ git clone https://github.com/Qsnh/cut-video.git ~/.codex/skills/cut-talking-vide
 
 > 这段是 iPhone 拍的，画面太亮了，压一下曝光。
 
+> 整条视频调成 1.25 倍速。
+
 > 把「90% 的人都做错了」这句挪到开头。
 
 它会先识别语音、找出可能的语气词，逐个核对后再剪辑，最后交付：
@@ -84,6 +87,6 @@ git clone https://github.com/Qsnh/cut-video.git ~/.codex/skills/cut-talking-vide
 | --- | --- |
 | `find_fillers.py` | 用本地 Whisper 转写，列出语气词候选 |
 | `verify_plan.py` | 渲染前检查剪辑方案有没有切到正常说话的字 |
-| `cut_video.py` | 按剪辑方案渲染视频，可选重排字幕、烧录字幕（`--caption-style` 选样式，`--burn-font` 选字体）、HDR 转 SDR |
+| `cut_video.py` | 按剪辑方案渲染视频，可选重排字幕、烧录字幕（`--caption-style` 选样式，`--burn-font` 选字体）、倍速（`--speed`）、HDR 转 SDR |
 
 命令和剪辑方案格式见 [references/render.md](references/render.md)。

@@ -51,6 +51,12 @@ def remap(cues, spans):
     return result
 
 
+def retime(cues, speed):
+    """Move cues onto the frame grid of a cut played at this speed."""
+    scaled = ((round(a/speed), round(b/speed), text) for a, b, text in cues)
+    return [cue for cue in scaled if cue[0] < cue[1]]
+
+
 def write_srt(path, cues, fps):
     def stamp(frame):
         ms = round(frame*1000/fps)

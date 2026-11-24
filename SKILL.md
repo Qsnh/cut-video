@@ -1,6 +1,6 @@
 ---
 name: cut-talking-video
-description: Edit recorded talking-head videos for TikTok or Douyin. Use for full-talk filler removal (口播剪辑、去语气词), synchronized Chinese captions, iPhone exposure correction, or moving a spoken hook to the opening.
+description: Edit recorded talking-head videos for TikTok or Douyin. Use for full-talk filler removal (口播剪辑、去语气词), synchronized Chinese captions, iPhone exposure correction, playback speed (倍速), or moving a spoken hook to the opening.
 ---
 
 # Cut a talking video
@@ -28,6 +28,10 @@ Use the specific claim the user chose. Find a complete spoken question or judgme
 - Keep one cue under 23 Han characters, which is the most that fits one line at the renderer's smallest accepted size regardless of frame width; use an explicit line break for two longer lines. Merge cues shorter than four characters into a neighbour so the text does not flicker. A cue crossing a cut is kept only on the footage that survives, so rewrite it when removed words were part of it.
 - Name the font face explicitly for Chinese. On macOS `/System/Library/Fonts/STHeiti Medium.ttc` carries Simplified glyphs at index 1 and Traditional glyphs at index 0, so a wrong index renders correct text in the wrong regional forms; `PingFang.ttc` is absent on current systems. Confirm the chosen index reports a Simplified name before burning the whole talk. A font the user names or supplies goes to `--burn-font` the same way; the renderer refuses one that lacks any caption character.
 - A source-timed SRT can be remapped through cuts and reordered sections. Supply the corrected final-timeline SRT for burn-in. If working from an already captioned export, its existing captions move with the picture; update the sidecar and render new text only where the picture needs it.
+
+## When changing playback speed
+
+When the user asks for a faster or slower delivery (“1.25 倍速”), pass `--speed` to the renderer instead of editing the plan; it accepts 0.5 to 5. The plan, the filler review and any supplied SRT stay on the normal-speed timeline, and the renderer scales picture, voice and captions together. The voice keeps its pitch. The delivered SRT is on the sped-up timeline, so it must not be supplied again as `--edited-srt` for another render. Speech becomes hard to follow above about 1.5×, so preview a short plan at the chosen speed before the whole talk. Above 2× the result is a fast-forward rather than listenable speech, and rescaled captions pass too quickly to read; ask whether to drop them or write fewer, longer cues for the delivered timeline. The delivered duration is the kept duration divided by the speed.
 
 ## Deliver and verify
 

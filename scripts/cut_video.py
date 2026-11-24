@@ -15,13 +15,22 @@ from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
-from captions import STYLES, missing_glyphs, overlays, read_srt, remap, write_srt
+from captions import STYLES, missing_glyphs, overlays, read_srt, remap, retime, write_srt
 from color import grade
 
 
 def probe(path):
     raw = subprocess.check_output(['ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(path)])
     return json.loads(raw)['streams']
+
+
+def decode_lead(path, fps):
+    """Frames by which a part's first decode timestamp precedes its first picture."""
+    raw = subprocess.check_output(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                                   '-read_intervals', '%+#1', '-show_entries',
+                                   'packet=pts_time,dts_time', '-of', 'json', str(path)])
+    packet = json.loads(raw)['packets'][0]
+    return round((float(packet['pts_time'])-float(packet['dts_time']))*fps)
 
 
 def ff(work, *args):
@@ -83,6 +92,8 @@ def make_audio(work, source, spans, fps, channels):
 def render(args, work):
     fps, spans = plan(args.plan)
     total = sum(b-a for a, b in spans)
+    speed = args.speed or 1
+    delivered = round(total/speed)
     streams = probe(args.source)
     video = next(s for s in streams if s['codec_type'] == 'video' and not s['disposition']['attached_pic'])
     audio = next(s for s in streams if s['codec_type'] == 'audio')
@@ -105,6 +116,8 @@ def render(args, work):
         if missing:
             raise ValueError(f"{args.burn_font.name} has no glyph for {''.join(missing)}; "
                              'choose a font that covers every caption character.')
+    if cues and speed != 1:
+        cues = retime(cues, speed)
     if cues:
         write_srt(work/'edit.srt', cues, fps)
 
@@ -120,15 +133,31 @@ def render(args, work):
     runs = [chunk for run in runs for chunk in
             (run[i:i+limit] for i in range(0, len(run), limit))]
     cursor = 0
+    lead = 0
     listing = ['ffconcat version 1.0']
     for i, run in enumerate(runs):
+        # A run's place on the delivered timeline is rounded from its unscaled place,
+        # so the parts add up to the delivered total at any speed.
         length = sum(b-a for a, b in run)
+        first, last = round(cursor/speed), round((cursor+length)/speed)
+        count = last-first
+        cursor += length
+        if not count:
+            continue
         inputs = ['-i', args.source]
         select = '+'.join(f'between(n,{a},{b-1})' for a, b in run)
-        graph = (f"[0:{video['index']}]fps={fps}:start_time=0,select='{select}',"
-                 f'setpts=N/(({fps})*TB),{color_filter}')
+        graph = f"[0:{video['index']}]fps={fps}:start_time=0,select='{select}',"
+        if speed == 1:
+            graph += f'setpts=N/(({fps})*TB),'
+        else:
+            # Resampling to the delivery rate can round a run one frame past its last
+            # source frame, so clones of that frame covering two delivered frames pad
+            # the end before -frames:v.
+            pad = math.ceil(2*speed)+2
+            graph += f'tpad=stop_mode=clone:stop={pad},setpts=N/(({fps*speed})*TB),fps={fps},'
+        graph += color_filter
         if args.burn_font:
-            manifest = overlays(work/f'cards{i}', cues, cursor, cursor+length, fps,
+            manifest = overlays(work/f'cards{i}', cues, first, last, fps,
                                 args.burn_font, args.font_index, width, height,
                                 args.caption_style or 'box')
             inputs += ['-f', 'concat', '-safe', '0', '-i', manifest]
@@ -140,20 +169,34 @@ def render(args, work):
         part = f'part{i}.mp4'
         # FFmpeg 8+ dropped -filter_complex_script; the inline graph works on every version.
         ff(work, *inputs, '-filter_complex', graph, '-map', '[out]',
-           '-frames:v', length, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19',
+           '-frames:v', count, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19',
            '-pix_fmt', 'yuv420p', '-color_primaries', 'bt709', '-color_trc', 'bt709',
            '-colorspace', 'bt709', '-map_metadata', '-1', part)
-        if int(probe(work/part)[0]['nb_frames']) != length:
-            raise ValueError(f'Run {i+1} produced fewer than {length} frames. Check source bounds.')
-        listing.extend([f"file '{part}'", f'duration {float(length/fps):.9f}'])
-        cursor += length
+        if int(probe(work/part)[0]['nb_frames']) != count:
+            raise ValueError(f'Run {i+1} produced fewer than {count} frames. Check source bounds.')
+        lead = max(lead, decode_lead(work/part, fps))
+        listing.extend([f"file '{part}'", f'duration {float(count/fps):.9f}'])
     (work/'join.ffconcat').write_text('\n'.join(listing)+'\n')
     make_audio(work, args.source, spans, fps, min(audio['channels'], 2))
+    tempo = []
+    if speed != 1:
+        # atempo keeps the voice's pitch. Above 2 it skips samples instead of blending
+        # them, so a larger change is shared by equal stages of at most 2. Padding and
+        # trimming pin the length to the picture.
+        stages = max(1, math.ceil(math.log2(speed)))
+        chain = ','.join([f'atempo={float(speed)**(1/stages)}']*stages)
+        tempo = ['-af', f'{chain},apad,atrim=end_sample={round(delivered*48000/fps)}']
+    # A part of one or two frames has no B-frames, so its decode timestamps start with its
+    # pictures rather than two frames ahead like a longer part's. The join keeps each part's
+    # offset, and the jump stretches one frame's duration until a constant-rate decoder
+    # repeats frames. Renumbering every packet behind the largest lead spaces them evenly;
+    # setts would also rewrite the picture times unless pts is given.
     ff(work, '-f', 'concat', '-safe', '0', '-i', 'join.ffconcat', '-i', 'edit.wav',
-       '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+       '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
+       '-bsf:v', f'setts=pts=PTS:dts=round((N-{lead})/(({fps})*TB))', *tempo, '-c:a', 'aac', '-b:a', '192k',
        '-movflags', '+faststart', '-map_metadata', '-1', 'edit.mp4')
     v, a = probe(work/'edit.mp4')
-    if int(v['nb_frames']) != total or abs(float(a['duration'])-total/float(fps)) > max(.025, 1/float(fps)):
+    if int(v['nb_frames']) != delivered or abs(float(a['duration'])-delivered/float(fps)) > max(.025, 1/float(fps)):
         raise ValueError('The output does not match the planned picture or audio duration.')
     ff(work, '-xerror', '-i', 'edit.mp4', '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-')
     return bool(cues)
@@ -172,12 +215,16 @@ def main():
     parser.add_argument('--caption-style', choices=list(STYLES),
                         help='Burned-in caption look (default box)')
     parser.add_argument('--hlg-strength', type=float, help='HLG highlight curve gain (default 2.6)')
+    parser.add_argument('--speed', type=Fraction,
+                        help='Playback speed of the delivered cut, 0.5 to 5 (default 1)')
     parser.add_argument('--workdir', type=Path,
                         help='Scratch space, by default a hidden folder beside the output')
     args = parser.parse_args()
     args.source = args.source.resolve(strict=True)
     if args.hlg_strength is not None and not (math.isfinite(args.hlg_strength) and args.hlg_strength > 0):
         parser.error('HLG strength must be positive and finite.')
+    if args.speed is not None and not Fraction(1, 2) <= args.speed <= 5:
+        parser.error('Speed must be between 0.5 and 5.')
     if args.caption_style and not args.burn_font:
         parser.error('A caption style needs --burn-font.')
     out = args.output.absolute()
