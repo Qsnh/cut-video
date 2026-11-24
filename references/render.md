@@ -46,7 +46,31 @@ python3 scripts/cut_video.py input.MOV plan.json final.mp4 \
   --source-srt source.srt --burn-font /path/to/ChineseFont.ttc --font-index 1
 ```
 
-Use `--edited-srt final-timeline.srt` in place of `--source-srt` when the cues already follow the final cut. Supplying an SRT writes an editable sidecar next to the MP4. Adding a font burns the same cues into the picture. Select the appropriate face index for a font collection. Line breaks in the SRT control caption wrapping. Review slow or crowded cues before rendering.
+Use `--edited-srt final-timeline.srt` in place of `--source-srt` when the cues already follow the final cut. Supplying an SRT writes an editable sidecar next to the MP4. Adding a font burns the same cues into the picture. Line breaks in the SRT control caption wrapping, and each line is centred on its visible characters. Review slow or crowded cues before rendering.
+
+`--burn-font` accepts any TTF, OTF or TTC file, so a downloaded typeface such as Source Han Sans works the same way as a system font. Select the face with `--font-index` for a collection; this lists the faces and their index:
+
+```sh
+python3 -c "import sys; from PIL import ImageFont as F
+for i in range(64):
+  try: print(i, *F.truetype(sys.argv[1], 20, index=i).getname())
+  except OSError: break" /path/to/Font.ttc
+```
+
+Before encoding, the renderer stops and names any caption character the font has no glyph for, since it would otherwise burn a placeholder box into the picture. Decorative typefaces often omit punctuation, digits or less common Han characters.
+
+`--caption-style` chooses how burned-in cues look; it requires `--burn-font`. Every style keeps the same position, size and line limit.
+
+| Style | Look |
+| --- | --- |
+| `box` (default) | White text on a translucent dark box |
+| `white-box` | Dark text on a white box |
+| `yellow-box` | Dark text on a solid yellow box |
+| `outline` | White text with a black outline, no box |
+| `yellow-outline` | Yellow text with a black outline, no box |
+| `shadow` | White text with a thin outline and a soft drop shadow |
+
+Boxed styles stay readable over any background. Outline and shadow styles cover less of the picture but depend on the stroke, so check them against bright clothing and backgrounds. To compare styles, render the same short temporary plan once per style and inspect the frames with the actual speaker.
 
 The renderer splits chronological cuts into runs of at most 90 intervals, because FFmpeg's expression evaluator rejects a `select` with more than 100 `between()` terms and reports the size limit as `Cannot allocate memory`. A full-talk cleanup of a ten-minute recording commonly needs more, so keep the plan as one flat chronological list and let the renderer chunk it. Each run is encoded separately and joined, and every part is checked for its frame count.
 

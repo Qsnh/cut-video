@@ -15,7 +15,7 @@ from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
-from captions import overlays, read_srt, remap, write_srt
+from captions import STYLES, missing_glyphs, overlays, read_srt, remap, write_srt
 from color import grade
 
 
@@ -100,6 +100,11 @@ def render(args, work):
             raise ValueError('The edited SRT extends beyond the final frame.')
     if args.burn_font and not cues:
         raise ValueError('Burn-in requires caption cues on the retained footage.')
+    if args.burn_font:
+        missing = missing_glyphs(args.burn_font, args.font_index, cues)
+        if missing:
+            raise ValueError(f"{args.burn_font.name} has no glyph for {''.join(missing)}; "
+                             'choose a font that covers every caption character.')
     if cues:
         write_srt(work/'edit.srt', cues, fps)
 
@@ -124,7 +129,8 @@ def render(args, work):
                  f'setpts=N/(({fps})*TB),{color_filter}')
         if args.burn_font:
             manifest = overlays(work/f'cards{i}', cues, cursor, cursor+length, fps,
-                                args.burn_font, args.font_index, width, height)
+                                args.burn_font, args.font_index, width, height,
+                                args.caption_style or 'box')
             inputs += ['-f', 'concat', '-safe', '0', '-i', manifest]
             graph += ('[pic];[1:v]format=rgba[txt];'
                       '[pic][txt]overlay=0:main_h*0.695:shortest=1')
@@ -163,6 +169,8 @@ def main():
     sub.add_argument('--edited-srt', type=Path, help='Use cues already aligned to final speech')
     parser.add_argument('--burn-font', type=Path, help='Burn captions using this TTF, OTF or TTC')
     parser.add_argument('--font-index', type=int, default=0)
+    parser.add_argument('--caption-style', choices=list(STYLES),
+                        help='Burned-in caption look (default box)')
     parser.add_argument('--hlg-strength', type=float, help='HLG highlight curve gain (default 2.6)')
     parser.add_argument('--workdir', type=Path,
                         help='Scratch space, by default a hidden folder beside the output')
@@ -170,6 +178,8 @@ def main():
     args.source = args.source.resolve(strict=True)
     if args.hlg_strength is not None and not (math.isfinite(args.hlg_strength) and args.hlg_strength > 0):
         parser.error('HLG strength must be positive and finite.')
+    if args.caption_style and not args.burn_font:
+        parser.error('A caption style needs --burn-font.')
     out = args.output.absolute()
     srt = out.with_suffix('.srt')
     if out.suffix.lower() != '.mp4' or out.exists() or ((args.source_srt or args.edited_srt) and srt.exists()):
