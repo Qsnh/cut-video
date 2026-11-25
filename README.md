@@ -4,6 +4,47 @@
 
 视频全程在本机处理，不会上传。
 
+## 效果演示
+
+### 去语气词
+
+一段 18.4 秒带解说的录屏，中间夹了 5 处语气词。划线部分是被剪掉的：
+
+> 大家好。~~嗯，~~今天给大家介绍一个剪辑工具。~~呃，~~它可以自动找出视频里的语气词，~~啊，~~然后把它们剪掉。~~嗯，~~剪完之后，~~呃，~~说的内容一个字都不会少。
+
+成片 13.8 秒。剪完重新识别一遍，语气词为 0 处，正文字数和原片一致。检查脚本的输出（节选）：
+
+```
+source    47 tokens, 52 content characters
+edited    42 tokens, 52 content characters (+0)
+OK        the cut removed only fillers and pauses
+PASS
+```
+
+原片和成片可以下载试听：[剪辑前](docs/demo/fillers-before.mp4) · [剪辑后](docs/demo/fillers-after.mp4)
+
+### 加背景
+
+左边是原片，右边加了 sunset 背景：
+
+![原片和加背景的对比](docs/images/background.gif)
+
+竖屏视频配 4 种内置渐变、纯色和视频自身模糊：
+
+![竖屏背景](docs/images/background-portrait.jpg)
+
+横屏的录屏和实拍也一样，字幕放在卡片内底部：
+
+![横屏背景](docs/images/background-landscape.jpg)
+
+### 字幕样式
+
+6 种烧录样式，字体也可以换成你自己的：
+
+![字幕样式](docs/images/captions.jpg)
+
+<sub>演示素材：动画画面来自 [Big Buck Bunny](https://peach.blender.org/)，© Blender Foundation，[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)；录屏画面为示意；解说由 macOS 语音合成生成。</sub>
+
 ## 能做什么
 
 - **去语气词**：只要视频里有人说话（口播、带解说的录屏、教程），都能保留完整内容，只剪掉「嗯、呃、啊」、um、uh 和多余停顿。剪完会重新识别一遍并核对字数，确认没误删内容。
@@ -55,10 +96,17 @@ python3 -c "import whisper; whisper.load_model('small')"
 
 ```sh
 # Claude Code
-git clone https://github.com/Qsnh/cut-video.git ~/.claude/skills/cut-talking-video
+git clone https://github.com/Qsnh/cut-video.git ~/.claude/skills/cut-video
 
 # Codex
-git clone https://github.com/Qsnh/cut-video.git ~/.codex/skills/cut-talking-video
+git clone https://github.com/Qsnh/cut-video.git ~/.codex/skills/cut-video
+```
+
+从旧版升级：Skill 原来叫 `cut-talking-video`，现在改名为 `cut-video`。把原来的目录改名后再更新即可，之后用 `cut-video` 调用：
+
+```sh
+mv ~/.claude/skills/cut-talking-video ~/.claude/skills/cut-video
+git -C ~/.claude/skills/cut-video pull
 ```
 
 ## 使用

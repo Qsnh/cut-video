@@ -1,5 +1,5 @@
 ---
-name: cut-talking-video
+name: cut-video
 description: Edit a recorded video for TikTok, Douyin and other platforms, whether a talking head (口播), a narrated screen recording, a tutorial or a silent clip. Use for any combination of filler removal (去语气词), trimming or removing sections (掐头去尾、删掉一段), synchronized Chinese captions, iPhone exposure correction, playback speed (倍速), a decorative background behind the picture (视频背景), or moving a spoken hook to the opening.
 ---
 
@@ -52,4 +52,4 @@ When the user asks for a background (视频背景), such as the picture as a rou
 
 Export a separate playable MP4. When captions are requested, deliver the matching SRT alongside the captioned video. Review the first two seconds, both sides of moved passages, several ordinary cuts, and the final word. Check lip sync and caption placement near the beginning, middle and end. Where there is no speech, review the frames on both sides of each cut and the last frame instead. Report what changed, the duration, and links to the finished files. The deliverable for a publishing request phrased as “I will publish” is the local upload-ready file.
 
-Rendering writes scratch files beside the output as a hidden `.talk-edit-*` folder, which stays behind if the process is killed. Point `--workdir` at the agent's working directory for long jobs, and mention any leftover folder rather than deleting files in the user's folders.
+Rendering writes scratch files beside the output as a hidden `.cut-video-*` folder, which stays behind if the process is killed. Point `--workdir` at the agent's working directory for long jobs, and mention any leftover folder rather than deleting files in the user's folders.

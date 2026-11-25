@@ -297,7 +297,7 @@ def main():
     parent.mkdir(parents=True, exist_ok=True)
     # Without a handler, a terminated render leaves its scratch folder and cards behind.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
-    with tempfile.TemporaryDirectory(prefix='.talk-edit-', dir=parent) as tmp:
+    with tempfile.TemporaryDirectory(prefix='.cut-video-', dir=parent) as tmp:
         work = Path(tmp)
         has_cues = render(args, work)
         if has_cues:
