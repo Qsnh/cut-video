@@ -15,7 +15,8 @@ from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
-from captions import STYLES, missing_glyphs, overlays, read_srt, remap, retime, write_srt
+import background
+from captions import STYLES, missing_glyphs, overlays, read_srt, remap, retime, strip_top, write_srt
 from color import grade
 
 
@@ -102,6 +103,12 @@ def render(args, work):
     if round(rotation/90) % 2:
         width, height = height, width
     color_filter = grade(video, work, args.hlg_strength)
+    # Without a background the card is the whole frame.
+    x, y, cw, ch = 0, 0, width, height
+    if args.background:
+        box = background.card(width, height, args.padding, args.radius)
+        x, y, cw, ch, _ = box
+        stills, backdrop = background.prepare(*args.background, width, height, box, work)
     cues = []
     if args.source_srt:
         cues = remap(read_srt(args.source_srt, fps), spans)
@@ -156,13 +163,20 @@ def render(args, work):
             pad = math.ceil(2*speed)+2
             graph += f'tpad=stop_mode=clone:stop={pad},setpts=N/(({fps*speed})*TB),fps={fps},'
         graph += color_filter
+        if args.background:
+            still = inputs.count('-i')
+            for name in stills:
+                inputs += ['-loop', '1', '-i', name]
+            graph += backdrop.format(*range(still, still+len(stills)))
         if args.burn_font:
+            # Captions are laid out on the card, so they stay inside it on a background.
             manifest = overlays(work/f'cards{i}', cues, first, last, fps,
-                                args.burn_font, args.font_index, width, height,
+                                args.burn_font, args.font_index, cw, ch,
                                 args.caption_style or 'box')
+            txt = inputs.count('-i')
             inputs += ['-f', 'concat', '-safe', '0', '-i', manifest]
-            graph += ('[pic];[1:v]format=rgba[txt];'
-                      '[pic][txt]overlay=0:main_h*0.695:shortest=1')
+            graph += (f'[pic];[{txt}:v]format=rgba[txt];'
+                      f'[pic][txt]overlay={x}:{y+strip_top(cw, ch)}:shortest=1')
         graph = graph+'[out]'
         graph_file = work/f'filter{i}.txt'
         graph_file.write_text(graph)
@@ -214,6 +228,13 @@ def main():
     parser.add_argument('--font-index', type=int, default=0)
     parser.add_argument('--caption-style', choices=list(STYLES),
                         help='Burned-in caption look (default box)')
+    parser.add_argument('--background',
+                        help='Show the picture as a rounded card on a preset '
+                             f"({', '.join(background.PRESETS)}, random), a colour, an image file or blur")
+    parser.add_argument('--padding', type=float,
+                        help='Margin around the card, percent of the short side (default 6)')
+    parser.add_argument('--radius', type=float,
+                        help='Card corner radius, percent of the short side (default 3.5)')
     parser.add_argument('--hlg-strength', type=float, help='HLG highlight curve gain (default 2.6)')
     parser.add_argument('--speed', type=Fraction,
                         help='Playback speed of the delivered cut, 0.5 to 5 (default 1)')
@@ -227,6 +248,17 @@ def main():
         parser.error('Speed must be between 0.5 and 5.')
     if args.caption_style and not args.burn_font:
         parser.error('A caption style needs --burn-font.')
+    if (args.padding is not None or args.radius is not None) and not args.background:
+        parser.error('Padding and radius need --background.')
+    if args.background:
+        try:
+            args.background = background.resolve(args.background)
+        except ValueError as exc:
+            parser.error(str(exc))
+        args.padding = 6 if args.padding is None else args.padding
+        args.radius = 3.5 if args.radius is None else args.radius
+        if not (0 <= args.padding <= 25 and 0 <= args.radius <= 20):
+            parser.error('Padding must be 0 to 25 and radius 0 to 20 percent of the short side.')
     out = args.output.absolute()
     srt = out.with_suffix('.srt')
     if out.suffix.lower() != '.mp4' or out.exists() or ((args.source_srt or args.edited_srt) and srt.exists()):

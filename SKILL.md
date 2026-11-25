@@ -1,6 +1,6 @@
 ---
 name: cut-talking-video
-description: Edit recorded talking-head videos for TikTok or Douyin. Use for full-talk filler removal (口播剪辑、去语气词), synchronized Chinese captions, iPhone exposure correction, playback speed (倍速), or moving a spoken hook to the opening.
+description: Edit recorded talking-head videos for TikTok or Douyin. Use for full-talk filler removal (口播剪辑、去语气词), synchronized Chinese captions, iPhone exposure correction, playback speed (倍速), a decorative background behind the picture (视频背景), or moving a spoken hook to the opening.
 ---
 
 # Cut a talking video
@@ -32,6 +32,10 @@ Use the specific claim the user chose. Find a complete spoken question or judgme
 ## When changing playback speed
 
 When the user asks for a faster or slower delivery (“1.25 倍速”), pass `--speed` to the renderer instead of editing the plan; it accepts 0.5 to 5. The plan, the filler review and any supplied SRT stay on the normal-speed timeline, and the renderer scales picture, voice and captions together. The voice keeps its pitch. The delivered SRT is on the sped-up timeline, so it must not be supplied again as `--edited-srt` for another render. Speech becomes hard to follow above about 1.5×, so preview a short plan at the chosen speed before the whole talk. Above 2× the result is a fast-forward rather than listenable speech, and rescaled captions pass too quickly to read; ask whether to drop them or write fewer, longer cues for the delivered timeline. The delivered duration is the kept duration divided by the speed.
+
+## When adding a background
+
+When the user asks for a background (视频背景), such as the picture as a rounded card on a wallpaper or gradient, pass `--background` to the renderer ([values](references/render.md#background)). It takes a gradient preset (`sunset`, `spring`, `ocean`, `dusk`, or `random`), a colour, an image file, or `blur` for the picture itself blurred behind the card. The frame keeps its size and orientation, and `--padding` and `--radius` widen the margin or round the corners. Burned-in captions are laid out on the card: below the face on portrait, near the card's bottom edge on landscape. A wallpaper the user names, including the macOS ones under `/System/Library/Desktop Pictures`, is passed as its path; never copy one into the skill. If they ask without naming a background, render a short preview on a few and let them choose. `random` prints the preset it picked; name it in the report.
 
 ## Deliver and verify
 

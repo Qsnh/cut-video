@@ -72,6 +72,8 @@ Before encoding, the renderer stops and names any caption character the font has
 
 Boxed styles stay readable over any background. Outline and shadow styles cover less of the picture but depend on the stroke, so check them against bright clothing and backgrounds. To compare styles, render the same short temporary plan once per style and inspect the frames with the actual speaker.
 
+Portrait cues sit below the face, sized from the frame width. A landscape frame puts them near its bottom edge and sizes them from its height, about 5% of it, so the 23-character line limit still fits.
+
 `--speed` plays the whole delivered cut faster or slower, from 0.5 to 5, at the plan's frame rate. A fraction such as `4/3` is accepted. The voice keeps its pitch, and frames are dropped or repeated to hold the delivery rate. FFmpeg's `atempo` skips samples rather than blending them above 2, so a faster speed is split into equal stages of at most 2. Keep the plan and any `--source-srt` or `--edited-srt` on the normal-speed timeline; the renderer rescales the cues and writes the sidecar for the delivered speed. Omitting it, or passing 1, renders exactly as before.
 
 ```sh
@@ -86,3 +88,26 @@ The renderer targets square-pixel phone footage with a playable first audio trac
 Scratch files go to a hidden `.talk-edit-*` folder beside the output, kept on the same filesystem so the finished files can be hard-linked into place. Pass `--workdir <dir>` to move that work into the agent's own directory, which copies across filesystems instead of linking. The folder is removed on success or failure, but survives a killed process; report it for the user to remove rather than deleting inside their folders.
 
 For a short hook, use a temporary plan containing just its spans and inspect the resulting first two seconds before the full export. Use the same intervals in the final plan. Reuse the original high-quality video and audio when revising an edit.
+
+## Background
+
+`--background` shrinks the picture into a rounded card with a soft shadow and fills the rest of the same-sized frame:
+
+| Value | Background |
+| --- | --- |
+| `sunset`, `spring`, `ocean`, `dusk` | A built-in mesh gradient: orange to violet, green to yellow, blue, dark violet |
+| `random` | One of those presets, printed on stderr |
+| A colour, e.g. `'#efe9df'` or `white` | A solid colour |
+| An image path | The image, scaled to cover the frame and centred. HEIC, the format of the macOS wallpapers in `/System/Library/Desktop Pictures`, is converted with `sips` |
+| `blur` | The picture itself, blurred and darkened |
+
+`--padding` is the margin around the card and `--radius` its corner radius, both as a percentage of the frame's short side (defaults 6 and 3.5, limits 25 and 20). Using the short side gives a portrait and a landscape frame the same margin. Burned-in captions are laid out on the card, so a long cue never runs past its edge, and the 23-character line limit holds at any padding.
+
+```sh
+python3 scripts/cut_video.py input.MOV plan.json framed.mp4 --background sunset \
+  --source-srt source.srt --burn-font /path/to/ChineseFont.ttc --font-index 1
+python3 scripts/cut_video.py input.MOV plan.json framed.mp4 \
+  --background "/System/Library/Desktop Pictures/Sonoma.heic" --padding 10 --radius 6
+```
+
+A still background is drawn once per render as a layer with the shadow and a card-shaped hole, and laid over the padded picture, so it adds little encoding time. `blur` builds its background from each frame instead. Gradients carry faint grain, because a smooth 8-bit gradient bands after H.264 compression. Still layers are converted to the delivery's BT.709 colours explicitly; FFmpeg's default conversion would use BT.601 and shift them. Without `--background`, the picture fills the frame as before.

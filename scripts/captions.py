@@ -82,12 +82,22 @@ def missing_glyphs(font_path, font_index, cues):
     return sorted({c for _, _, text in cues for c in text if not c.isspace() and shape(c) == blank})
 
 
+def strip_top(width, height):
+    """Top of the caption strip: below the face on portrait, near the bottom on landscape."""
+    if width > height:
+        return height-max(12, round(height*.15))-round(height*.02)
+    return int(height*.695)
+
+
 def overlays(folder, cues, first, last, fps, font_path, font_index, width, height, style='box'):
     from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
     look = STYLES[style]
     folder.mkdir()
     strip = max(12, round(height*.15))
+    # Type is sized from the width, or on landscape from the height, so a wide frame
+    # gets subtitles of about 5% of its height rather than outsized ones.
+    span = min(width, height*25/24)
     listing = ['ffconcat version 1.0']
     position = first
     index = 0
@@ -99,7 +109,7 @@ def overlays(folder, cues, first, last, fps, font_path, font_index, width, heigh
         image = Image.new('RGBA', (width, strip))
         if text:
             d = ImageDraw.Draw(image)
-            for size in range(max(12, round(width*.048)), 6, -1):
+            for size in range(max(12, round(span*.048)), 6, -1):
                 font = ImageFont.truetype(str(font_path), size, index=font_index)
                 stroke = round(size*look.get('stroke_width', 0))
                 # Pillow spaces lines by the glyphs alone, so stroked lines would touch.
@@ -109,7 +119,7 @@ def overlays(folder, cues, first, last, fps, font_path, font_index, width, heigh
                 w, h = b[2]-b[0], b[3]-b[1]
                 if w < width*.82 and h < strip*.84:
                     break
-            if size < max(7, round(width*.035)):
+            if size < max(7, round(span*.035)):
                 raise ValueError(f'Split the cue for mobile readability: {text}')
 
             # Centre each line on its visible pixels. Pillow centres advance widths, so a
