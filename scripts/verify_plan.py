@@ -7,6 +7,7 @@ syllable or a dropped phrase shows up as a number rather than a listening test.
 """
 import argparse
 import json
+import math
 import sys
 from fractions import Fraction
 from pathlib import Path
@@ -29,15 +30,24 @@ def read_words(path):
     return [dict(text=w['text'], start=float(w['start']), end=float(w['end'])) for w in words]
 
 
-def read_plan(path):
+def read_plan(path, end):
+    """Read the kept intervals and the ranges dropped on purpose.
+
+    An interval ending in null runs to end, in seconds."""
     spec = json.loads(Path(path).read_text(encoding='utf-8'))
     fps = Fraction(str(spec['fps']))
-    spans = []
-    for left, right in spec['keep']:
-        if not isinstance(left, int) or not isinstance(right, int) or left >= right or left < 0:
-            raise ValueError('Each keep interval needs two ordered nonnegative frame indices.')
-        spans.append((left, right))
-    return fps, spans
+
+    def intervals(key):
+        spans = []
+        for left, right in spec.get(key, []):
+            if right is None and isinstance(left, int):
+                right = max(left+1, math.ceil(end*fps))
+            if not isinstance(left, int) or not isinstance(right, int) or left >= right or left < 0:
+                raise ValueError(f'Each {key} interval needs two ordered nonnegative frame indices.')
+            spans.append((left, right))
+        return spans
+
+    return fps, intervals('keep'), intervals('drop')
 
 
 def coverage(spans, fps, end):
@@ -64,10 +74,10 @@ def main():
     args = parser.parse_args()
 
     source = read_words(args.words)
-    fps, spans = read_plan(args.plan)
     if not source:
         parser.error('The transcript has no words.')
     speech_end = max(w['end'] for w in source) + .5
+    fps, spans, drops = read_plan(args.plan, speech_end)
     kept, holes = coverage(spans, fps, speech_end)
     ordered = sorted(spans)
 
@@ -76,10 +86,26 @@ def main():
 
     if any(ordered[i][0] < ordered[i-1][1] for i in range(1, len(ordered))):
         print('FAIL      kept intervals overlap in source coordinates')
+    status = 0
+    if any(a < right and left < b for a, b in drops for left, right in spans):
+        status = 1
+        print('FAIL      a drop range overlaps kept footage')
 
-    damaged, borderline = [], 0
+    # Speech the user asked to remove, by trimming or for a highlight, is listed under
+    # drop. Words wholly inside it are left out of both checks; one that straddles its
+    # edge is still damage, since the boundary belongs in the gap between two words.
+    margin = args.tolerance
+    dropped = [(a/float(fps)-margin, b/float(fps)+margin) for a, b in drops]
+
+    def chosen(word):
+        return any(a <= word['start'] and word['end'] <= b for a, b in dropped)
+
+    damaged, borderline, removed = [], 0, 0
     for word in source:
         if not content(word['text']) or is_filler(word['text']):
+            continue
+        if chosen(word):
+            removed += len(content(word['text']))
             continue
         worst = 0.0
         for left, right in holes:
@@ -95,7 +121,9 @@ def main():
     total = sum(len(content(w['text'])) for w in source
                 if content(w['text']) and not is_filler(w['text']))
     print(f'source    {len(source)} tokens, {total} content characters')
-    status = 0
+    if drops:
+        print(f'drop      {removed} content characters removed on purpose')
+        total -= removed
     if damaged:
         status = 1
         damaged.sort(key=lambda item: -item[0])
@@ -117,7 +145,7 @@ def main():
             status = 1
             print('FAIL      the cut lost or invented speech; compare both transcripts')
         else:
-            print('OK        the cut removed only fillers and pauses')
+            print('OK        the cut removed only fillers and pauses'+(' besides the drops' if drops else ''))
 
     print('PASS' if status == 0 else 'REVIEW BEFORE RENDERING')
     return status

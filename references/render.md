@@ -20,7 +20,7 @@ Use a small batch of suspected fillers to refine the edit before processing the 
 
 ## Represent an edit
 
-Choose the delivery frame rate from the recording and the user's intended output. A phone's variable frame rate can be normalized to its nominal rate. For 29.97 use the exact fraction `"30000/1001"`. Convert a reviewed time in seconds to a source frame with `round(seconds * fps)`. For a whole-talk cleanup, sort and merge the removed ranges, then take their complement from frame zero through the end of the normalized picture. Obtain that frame count from the normalized timeline, especially for variable-frame-rate inputs.
+Choose the delivery frame rate from the recording and the user's intended output. A phone's variable frame rate can be normalized to its nominal rate. For 29.97 use the exact fraction `"30000/1001"`. Convert a reviewed time in seconds to a source frame with `round(seconds * fps)`. For a whole-talk cleanup, sort and merge the removed ranges, then take their complement from frame zero through the end of the normalized picture. End the last interval in `null` rather than counting those frames yourself.
 
 This example uses twelve seconds of source at 30 fps. Frames 90–104 are a reviewed hesitation. The closing statement (frames 240–359) is moved to the beginning.
 
@@ -28,7 +28,15 @@ This example uses twelve seconds of source at 30 fps. Frames 90–104 are a revi
 {"fps": 30, "keep": [[240, 360], [0, 90], [105, 240]]}
 ```
 
-Save this as `plan.json`. It produces 345 frames, or 11.5 seconds. Sources for the plan, media and source SRT must share the same time origin. When working from an approved cut, use its time coordinates. To regrade from camera originals, map the approved cut's intervals back through the earlier keep list first.
+An interval may end in `null`, which runs it to the source's last frame on the plan's grid. The renderer counts the frames by decoding the source once with the same `fps` filter as the render, so the end is exact for a variable-frame-rate recording too. `[[0, null]]` keeps a whole video whose speed, background or color alone changes.
+
+Ranges the user asked to remove, such as a trimmed opening or the passages a highlight leaves out, are also listed under `drop`, in the same frame form. The renderer ignores it. The checker uses it to tell speech removed on purpose from speech a filler cut lost. This plan trims the first five seconds and one hesitation, and keeps everything after:
+
+```json
+{"fps": 30, "keep": [[150, 300], [312, null]], "drop": [[0, 150]]}
+```
+
+Save the first example as `plan.json`. It produces 345 frames, or 11.5 seconds. Sources for the plan, media and source SRT must share the same time origin. When working from an approved cut, use its time coordinates. To regrade from camera originals, map the approved cut's intervals back through the earlier keep list first.
 
 ## Check the plan before rendering
 
@@ -36,7 +44,7 @@ Save this as `plan.json`. It produces 345 frames, or 11.5 seconds. Sources for t
 python3 scripts/verify_plan.py words.json plan.json --edited words_edited.json
 ```
 
-The checker prints the kept duration, the cut count, and any content word that a removed range overlaps by more than 50 ms, which is how a cut that ate a syllable's onset is caught without listening. With `--edited`, it also compares content characters between the two transcripts; an unequal count means the cut lost or invented speech. Exit status is nonzero when either check fails. Expect a first pass to fail this and to need repair at the reported timestamps.
+The checker prints the kept duration, the cut count, and any content word that a removed range overlaps by more than 50 ms, which is how a cut that ate a syllable's onset is caught without listening. With `--edited`, it also compares content characters between the two transcripts; an unequal count means the cut lost or invented speech. Words wholly inside a `drop` range are left out of both checks and reported as removed on purpose. A word straddling a drop boundary still fails, so move that boundary into the gap between two words. The checker also fails a drop range that overlaps kept footage. Exit status is nonzero when either check fails. Expect a first pass to fail this and to need repair at the reported timestamps.
 
 ## Render
 
@@ -83,7 +91,7 @@ python3 scripts/cut_video.py input.MOV plan.json fast.mp4 --speed 1.25 \
 
 The renderer splits chronological cuts into runs of at most 90 intervals, because FFmpeg's expression evaluator rejects a `select` with more than 100 `between()` terms and reports the size limit as `Cannot allocate memory`. A full-talk cleanup of a ten-minute recording commonly needs more, so keep the plan as one flat chronological list and let the renderer chunk it. Each run is encoded separately and joined, and every part is checked for its frame count. A part of one or two frames has no B-frames, so the join renumbers decode timestamps evenly across all parts; otherwise a constant-frame-rate transcode would repeat frames there.
 
-The renderer targets square-pixel phone footage with a playable first audio track and produces H.264/AAC SDR video. It keeps the displayed orientation and frame dimensions of common even-sized phone recordings. If an input needs a different dialogue track, HDR delivery, PQ tone mapping or a different layout, adapt the FFmpeg workflow to that source. To try two HLG exposures, render a short representative plan into separate preview files with `--hlg-strength 2.6` and `--hlg-strength 2.0`. The lower value gives a darker result. Use the approved setting for the final encode. Each render checks that the entire output decodes.
+The renderer targets square-pixel footage, such as phone recordings, screen recordings and camera files, and produces H.264/AAC SDR video in the displayed orientation and frame size. It uses the first audio track. A source without one gives a video-only MP4 and has no speech for the filler finder. A frame with an odd width or height loses its last column or row, because H.264 in 4:2:0 needs even sides; a recording of a selected screen area is the usual case. If an input needs a different audio track, HDR delivery, PQ tone mapping or a different layout, adapt the FFmpeg workflow to that source. To try two HLG exposures, render a short representative plan into separate preview files with `--hlg-strength 2.6` and `--hlg-strength 2.0`. The lower value gives a darker result. Use the approved setting for the final encode. Each render checks that the entire output decodes.
 
 Scratch files go to a hidden `.talk-edit-*` folder beside the output, kept on the same filesystem so the finished files can be hard-linked into place. Pass `--workdir <dir>` to move that work into the agent's own directory, which copies across filesystems instead of linking. The folder is removed on success or failure, but survives a killed process; report it for the user to remove rather than deleting inside their folders.
 

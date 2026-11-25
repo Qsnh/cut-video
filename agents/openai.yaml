@@ -1,4 +1,4 @@
 interface:
-  display_name: "口播视频剪辑"
-  short_description: "Clean up talking videos, sync captions, and move a spoken hook."
+  display_name: "视频剪辑"
+  short_description: "Cut talking videos and other footage: remove fillers, trim, caption, change speed, add a background."
   default_prompt: "用 $cut-talking-video 剪这段口播，保留完整内容，去掉语气词，并加同步中文字幕。"

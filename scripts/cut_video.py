@@ -5,6 +5,7 @@ import errno
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -49,13 +50,29 @@ def publish(src, dest):
         shutil.copy2(src, dest)
 
 
-def plan(path):
+def count_frames(path, index, fps):
+    """Frames of a stream on the plan's constant-rate grid, as the render graph numbers them."""
+    out = subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-i', str(path), '-map', f'0:{index}',
+                          '-vf', f'fps={fps}:start_time=0', '-progress', 'pipe:1', '-f', 'null', '-'],
+                         capture_output=True, text=True, check=True).stdout
+    return int(re.findall(r'^frame=(\d+)$', out, re.M)[-1])
+
+
+def plan(path, frames):
+    """Read the plan. An interval ending in null runs to the last frame, counted by frames(fps)."""
     spec = json.loads(path.read_text())
     fps = Fraction(str(spec['fps']))
     if fps <= 0:
         raise ValueError('fps must be positive.')
+    end = None
     spans = []
     for left, right in spec['keep']:
+        if right is None:
+            end = frames(fps) if end is None else end
+            right = end
+            if type(left) is int and left >= end:
+                raise ValueError(f'An interval to the end starts at frame {left}, '
+                                 f'but the source has {end} frames at {fps} fps.')
         if type(left) is not int or type(right) is not int or not 0 <= left < right:
             raise ValueError('Each keep interval must contain two ordered, nonnegative frame indices.')
         if spans and spans[-1][1] == left:
@@ -91,17 +108,24 @@ def make_audio(work, source, spans, fps, channels):
 
 
 def render(args, work):
-    fps, spans = plan(args.plan)
+    streams = probe(args.source)
+    video = next(s for s in streams if s['codec_type'] == 'video' and not s['disposition']['attached_pic'])
+    # A screen recording or a muted clip may have no sound; its cut is delivered silent.
+    audio = next((s for s in streams if s['codec_type'] == 'audio'), None)
+    fps, spans = plan(args.plan, lambda rate: count_frames(args.source, video['index'], rate))
     total = sum(b-a for a, b in spans)
     speed = args.speed or 1
     delivered = round(total/speed)
-    streams = probe(args.source)
-    video = next(s for s in streams if s['codec_type'] == 'video' and not s['disposition']['attached_pic'])
-    audio = next(s for s in streams if s['codec_type'] == 'audio')
     width, height = video['width'], video['height']
     rotation = next((d['rotation'] for d in video.get('side_data_list', []) if 'rotation' in d), 0)
     if round(rotation/90) % 2:
         width, height = height, width
+    # H.264 in 4:2:0 needs even sides, and a recording of a selected screen area often has
+    # an odd one. Its last row or column is dropped.
+    even = ''
+    if width % 2 or height % 2:
+        width, height = width//2*2, height//2*2
+        even = f'crop={width}:{height}:0:0,'
     color_filter = grade(video, work, args.hlg_strength)
     # Without a background the card is the whole frame.
     x, y, cw, ch = 0, 0, width, height
@@ -162,7 +186,7 @@ def render(args, work):
             # the end before -frames:v.
             pad = math.ceil(2*speed)+2
             graph += f'tpad=stop_mode=clone:stop={pad},setpts=N/(({fps*speed})*TB),fps={fps},'
-        graph += color_filter
+        graph += even+color_filter
         if args.background:
             still = inputs.count('-i')
             for name in stills:
@@ -191,28 +215,34 @@ def render(args, work):
         lead = max(lead, decode_lead(work/part, fps))
         listing.extend([f"file '{part}'", f'duration {float(count/fps):.9f}'])
     (work/'join.ffconcat').write_text('\n'.join(listing)+'\n')
-    make_audio(work, args.source, spans, fps, min(audio['channels'], 2))
-    tempo = []
-    if speed != 1:
-        # atempo keeps the voice's pitch. Above 2 it skips samples instead of blending
-        # them, so a larger change is shared by equal stages of at most 2. Padding and
-        # trimming pin the length to the picture.
-        stages = max(1, math.ceil(math.log2(speed)))
-        chain = ','.join([f'atempo={float(speed)**(1/stages)}']*stages)
-        tempo = ['-af', f'{chain},apad,atrim=end_sample={round(delivered*48000/fps)}']
+    inputs = ['-f', 'concat', '-safe', '0', '-i', 'join.ffconcat']
+    maps = ['-map', '0:v:0']
+    sound = []
+    if audio:
+        make_audio(work, args.source, spans, fps, min(audio['channels'], 2))
+        inputs += ['-i', 'edit.wav']
+        maps += ['-map', '1:a:0']
+        if speed != 1:
+            # atempo keeps the voice's pitch. Above 2 it skips samples instead of blending
+            # them, so a larger change is shared by equal stages of at most 2. Padding and
+            # trimming pin the length to the picture.
+            stages = max(1, math.ceil(math.log2(speed)))
+            chain = ','.join([f'atempo={float(speed)**(1/stages)}']*stages)
+            sound = ['-af', f'{chain},apad,atrim=end_sample={round(delivered*48000/fps)}']
+        sound += ['-c:a', 'aac', '-b:a', '192k']
     # A part of one or two frames has no B-frames, so its decode timestamps start with its
     # pictures rather than two frames ahead like a longer part's. The join keeps each part's
     # offset, and the jump stretches one frame's duration until a constant-rate decoder
     # repeats frames. Renumbering every packet behind the largest lead spaces them evenly;
     # setts would also rewrite the picture times unless pts is given.
-    ff(work, '-f', 'concat', '-safe', '0', '-i', 'join.ffconcat', '-i', 'edit.wav',
-       '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
-       '-bsf:v', f'setts=pts=PTS:dts=round((N-{lead})/(({fps})*TB))', *tempo, '-c:a', 'aac', '-b:a', '192k',
+    ff(work, *inputs, *maps, '-c:v', 'copy',
+       '-bsf:v', f'setts=pts=PTS:dts=round((N-{lead})/(({fps})*TB))', *sound,
        '-movflags', '+faststart', '-map_metadata', '-1', 'edit.mp4')
-    v, a = probe(work/'edit.mp4')
-    if int(v['nb_frames']) != delivered or abs(float(a['duration'])-delivered/float(fps)) > max(.025, 1/float(fps)):
+    v, *a = probe(work/'edit.mp4')
+    if int(v['nb_frames']) != delivered or (
+            a and abs(float(a[0]['duration'])-delivered/float(fps)) > max(.025, 1/float(fps))):
         raise ValueError('The output does not match the planned picture or audio duration.')
-    ff(work, '-xerror', '-i', 'edit.mp4', '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-')
+    ff(work, '-xerror', '-i', 'edit.mp4', '-map', '0', '-f', 'null', '-')
     return bool(cues)
 
 
