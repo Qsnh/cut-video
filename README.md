@@ -39,9 +39,15 @@ PASS
 
 ### 字幕样式
 
-6 种烧录样式，字体也可以换成你自己的：
+6 种烧录样式：
 
 ![字幕样式](docs/images/captions.jpg)
+
+### 字幕字体
+
+字体可以换成任意 TTF / OTF / TTC 文件。除了 macOS 自带的黑体，下面几款都是免费可商用的开源字体：
+
+![字幕字体](docs/images/caption-fonts.jpg)
 
 <sub>演示素材：动画画面来自 [Big Buck Bunny](https://peach.blender.org/)，© Blender Foundation，[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)；录屏画面为示意；解说由 macOS 语音合成生成。</sub>
 
