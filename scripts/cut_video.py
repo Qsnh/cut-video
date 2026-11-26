@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import background
+import voice
 from captions import STYLES, missing_glyphs, overlays, read_srt, remap, retime, strip_top, write_srt
 from color import grade
 
@@ -140,8 +141,8 @@ def render(args, work):
         cues = read_srt(args.edited_srt, fps)
         if cues and cues[-1][1] > total:
             raise ValueError('The edited SRT extends beyond the final frame.')
-    if args.burn_font and not cues:
-        raise ValueError('Burn-in requires caption cues on the retained footage.')
+    if (args.burn_font or args.voice) and not cues:
+        raise ValueError('Burn-in and a new voice require caption cues on the retained footage.')
     if args.burn_font:
         missing = missing_glyphs(args.burn_font, args.font_index, cues)
         if missing:
@@ -149,6 +150,17 @@ def render(args, work):
                              'choose a font that covers every caption character.')
     if cues and speed != 1:
         cues = retime(cues, speed)
+    if args.voice:
+        # The voice is spoken for the delivered timeline, so at another speed it reads
+        # faster or slower itself rather than being stretched afterwards.
+        cues, faster = voice.track(cues, fps, delivered, args.voice,
+                                   args.voice_rate*float(speed), work/'voice.wav')
+        if faster:
+            print(f'Voice: {len(faster)} of {len(cues)} cues hurried to fit, at most '
+                  f'{max(f for _, f in faster):.2f}x', file=sys.stderr)
+            for at, factor in faster:
+                if factor > 1.25:
+                    print(f'  {float(at/fps):8.2f}s  {factor:.2f}x', file=sys.stderr)
     if cues:
         write_srt(work/'edit.srt', cues, fps)
 
@@ -218,7 +230,12 @@ def render(args, work):
     inputs = ['-f', 'concat', '-safe', '0', '-i', 'join.ffconcat']
     maps = ['-map', '0:v:0']
     sound = []
-    if audio:
+    if args.voice:
+        # The new voice replaces the recorded sound, which still carries the old voice.
+        inputs += ['-i', 'voice.wav']
+        maps += ['-map', '1:a:0']
+        sound = ['-c:a', 'aac', '-b:a', '192k']
+    elif audio:
         make_audio(work, args.source, spans, fps, min(audio['channels'], 2))
         inputs += ['-i', 'edit.wav']
         maps += ['-map', '1:a:0']
@@ -268,6 +285,10 @@ def main():
     parser.add_argument('--hlg-strength', type=float, help='HLG highlight curve gain (default 2.6)')
     parser.add_argument('--speed', type=Fraction,
                         help='Playback speed of the delivered cut, 0.5 to 5 (default 1)')
+    parser.add_argument('--voice',
+                        help='Replace the sound with the cues spoken in this Doubao voice ID')
+    parser.add_argument('--voice-rate', type=float,
+                        help='Speaking rate of the new voice, 0.5 to 2 (default 1)')
     parser.add_argument('--workdir', type=Path,
                         help='Scratch space, by default a hidden folder beside the output')
     args = parser.parse_args()
@@ -278,6 +299,15 @@ def main():
         parser.error('Speed must be between 0.5 and 5.')
     if args.caption_style and not args.burn_font:
         parser.error('A caption style needs --burn-font.')
+    if args.voice and not (args.source_srt or args.edited_srt):
+        parser.error('A new voice speaks the caption cues; supply --source-srt or --edited-srt.')
+    if args.voice and not os.environ.get('DOUBAO_API_KEY'):
+        parser.error('A new voice needs a Doubao Speech API key in DOUBAO_API_KEY.')
+    if args.voice_rate is not None and not args.voice:
+        parser.error('A voice rate needs --voice.')
+    args.voice_rate = 1 if args.voice_rate is None else args.voice_rate
+    if not .5 <= args.voice_rate <= 2:
+        parser.error('Voice rate must be between 0.5 and 2.')
     if (args.padding is not None or args.radius is not None) and not args.background:
         parser.error('Padding and radius need --background.')
     if args.background:

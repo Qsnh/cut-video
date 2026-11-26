@@ -1,6 +1,6 @@
 # Running the editor
 
-Use paths relative to the skill directory in these commands. Python 3, NumPy, FFmpeg 4.4 or later and FFprobe run the cut and color steps. Burn-in uses Pillow and a local font containing the caption characters. Candidate discovery additionally uses the Python package openai-whisper, PyTorch and a local multilingual Whisper checkpoint for Chinese. An existing word-timed transcript can also supply the candidate list.
+Use paths relative to the skill directory in these commands. Python 3, NumPy, FFmpeg 4.4 or later and FFprobe run the cut and color steps. Burn-in uses Pillow and a local font containing the caption characters. Candidate discovery additionally uses the Python package openai-whisper, PyTorch and a local multilingual Whisper checkpoint for Chinese. An existing word-timed transcript can also supply the candidate list. A new voice calls Doubao Speech over HTTPS with an API key in `DOUBAO_API_KEY`.
 
 ## Find and review possible fillers
 
@@ -119,3 +119,30 @@ python3 scripts/cut_video.py input.MOV plan.json framed.mp4 \
 ```
 
 A still background is drawn once per render as a layer with the shadow and a card-shaped hole, and laid over the padded picture, so it adds little encoding time. `blur` builds its background from each frame instead. Gradients carry faint grain, because a smooth 8-bit gradient bands after H.264 compression. Still layers are converted to the delivery's BT.709 colours explicitly; FFmpeg's default conversion would use BT.601 and shift them. Without `--background`, the picture fills the frame as before.
+
+## Voice
+
+`--voice` replaces the sound with the caption cues read aloud by Doubao Speech (豆包语音), using its streaming TTS endpoint `openspeech.bytedance.com/api/v3/tts/unidirectional`. The cues come from `--source-srt` or `--edited-srt` as usual, and a source without sound works the same way. Each cue's whole text is spoken, so when the plan cuts inside a cue, supply an `--edited-srt` whose text is exactly the kept speech; a remapped source cue would still carry the removed words, and a hook moved out of a cue would be spoken twice.
+
+```sh
+DOUBAO_API_KEY=... python3 scripts/cut_video.py input.MOV plan.json revoiced.mp4 \
+  --edited-srt final-timeline.srt --voice zh_female_vv_uranus_bigtts
+DOUBAO_API_KEY=... python3 scripts/cut_video.py screen.mov whole.json narrated.mp4 \
+  --edited-srt narration.srt --voice zh_male_m191_uranus_bigtts --voice-rate 1.1 \
+  --burn-font /path/to/ChineseFont.ttc --font-index 1
+```
+
+The voice ID chooses the service the request goes to: an ID containing `_uranus_` is a 2.0 voice on `seed-tts-2.0`, one starting `S_` is a cloned voice on `seed-icl-2.0`, and any other is a 1.0 voice on `seed-tts-1.0`. `DOUBAO_RESOURCE_ID` names the service outright, as a voice cloned on the 1.0 service (`seed-icl-1.0`) needs. A key reaches only the services enabled for it in the Volcengine console, so a voice outside them fails with HTTP 403 or `resource ID is mismatched with speaker related resource`, which is also the reply to a mistyped ID. The full list is the 音色列表 page of the [Doubao Speech documentation](https://www.volcengine.com/docs/6561). These 2.0 voices have been tried, and each also reads English:
+
+| Voice ID | Voice |
+| --- | --- |
+| `zh_female_vv_uranus_bigtts` | Vivi 2.0, female |
+| `zh_female_xiaohe_uranus_bigtts` | Female |
+| `zh_male_m191_uranus_bigtts` | 云舟 2.0, male |
+| `zh_male_taocheng_uranus_bigtts` | Male |
+
+Each cue is one request. Its lines are joined into one sentence, and a cue without letters or digits, such as `♪`, stays silent. The returned speech, with its leading and trailing silence trimmed, starts on the cue's first frame. When it is longer than the cue, it runs on into the following pause until 0.2 seconds before the next cue, and the cue's end moves to where the voice stops, in the sidecar and the burned-in captions. A sentence that is still too long is requested again at a faster `speech_rate` and then compressed with `atempo` to fit exactly. The renderer prints cues spoken more than 1.25× faster than the requested pace, and stops before encoding when any would need more than 1.5×, listing their delivered times and text. Widen such a cue into the silence around it or split its text across two cues.
+
+`--voice-rate` is the requested pace, from 0.5 to 2 times the voice's own. With `--speed`, the voice is generated for the delivered timeline at the voice rate times the speed, so it reads faster instead of being compressed afterwards. Doubao Speech reads from half to double speed, so a product outside that range is held to it: a sentence is then compressed only where it would not fit its cue, and a slow one is not stretched. The track is brought to -16 LUFS integrated, with a limiter holding sample peaks under -1.5 dBFS, and delivered as mono AAC. The recorded sound is dropped entirely, music and room sound included, because it still carries the old voice.
+
+Four requests run at once, at two to three seconds each, so a ten-minute talk with 200 cues adds about three minutes, and every render requests them again. Preview a new voice on a short plan first. A failed connection, a stream that ends before its closing message, HTTP 429 and server errors are retried twice, and a request refused in the parallel pass, as by a key allowed fewer at once, is made again on its own. The request goes direct, or through `HTTPS_PROXY` when set, but not through the macOS system proxy, and uses the `certifi` certificate bundle when that package is installed.
