@@ -26,6 +26,10 @@ HURRY = 1.5
 RAW = ['-f', 'f32le', '-ar', str(RATE), '-ac', '1']
 # Requests in flight at once. A key allowed fewer gets its refused ones again in turn.
 WORKERS = 4
+# Languages a voice reads when named, each heard to be honoured. The service ignores a
+# code it does not know and reads the text as Chinese and English instead.
+LANGUAGES = ('zh-cn', 'en', 'ja', 'ko', 'es-mx', 'pt-br', 'fr', 'de', 'it', 'ru', 'id', 'vi',
+             'th', 'ar', 'hi', 'tr', 'nl', 'pl', 'sv', 'no', 'fi', 'cs', 'hu', 'el', 'ro', 'fil')
 
 
 def resource(speaker):
@@ -49,15 +53,18 @@ def opener():
     return build_opener(ProxyHandler(getproxies_environment()), HTTPSHandler(context=context))
 
 
-def request(text, speaker, rate):
+def request(text, speaker, rate, language=None):
     """MP3 bytes for the text. speech_rate runs from -50 (half speed) to 100 (double)."""
     body = {'user': {'uid': 'cut-video'}, 'req_params': {
         'text': text, 'speaker': speaker,
         'audio_params': {'format': 'mp3', 'sample_rate': RATE, 'speech_rate': round((rate-1)*100)}}}
+    if language:
+        body['req_params']['additions'] = json.dumps({'explicit_language': language})
     headers = {'Content-Type': 'application/json', 'X-Api-Key': os.environ['DOUBAO_API_KEY'],
                'X-Api-Resource-Id': resource(speaker)}
     # A voice ID the key's services do not include is reported as a resource mismatch.
-    where = f'voice {speaker} on {resource(speaker)}'
+    # Text in a language other than the one named comes back as no audio.
+    where = f'voice {speaker} on {resource(speaker)}'+(f' reading {language}' if language else '')
     for attempt in range(3):
         audio, done = bytearray(), False
         headers['X-Api-Request-Id'] = str(uuid.uuid4())
@@ -101,9 +108,9 @@ def pipe(data, *args):
     return np.frombuffer(raw, np.float32).copy()
 
 
-def synthesize(text, speaker, rate):
+def synthesize(text, speaker, rate, language=None):
     """Mono samples of the spoken text with the silence around it trimmed."""
-    sound = pipe(request(text, speaker, rate), '-i', '-')
+    sound = pipe(request(text, speaker, rate, language), '-i', '-')
     loud = np.flatnonzero(np.abs(sound) > 10**(-45/20))
     if not loud.size:
         raise RuntimeError(f'Doubao TTS returned silence for: {text}')
@@ -136,21 +143,47 @@ def level(sound):
     return np.concatenate([louder, np.zeros(len(sound)-len(louder), np.float32)])
 
 
+def han(char):
+    return ('\u3400' <= char <= '\u9fff' or '\uf900' <= char <= '\ufaff'
+            or '\U00020000' <= char <= '\U0003ffff')
+
+
+def unspaced(char):
+    """Whether the character's script writes words without spaces: Chinese or Japanese."""
+    # Kana and full-width forms, besides the Han characters themselves.
+    return han(char) or '\u3000' <= char <= '\u30ff' or '\uff00' <= char <= '\uffef'
+
+
 def spoken(text):
     """A cue's lines as one phrase, or '' when nothing in it can be read aloud."""
     phrase = ''
     for line in filter(None, (line.strip() for line in text.split('\n'))):
-        # A caption line break sits inside a phrase, so Chinese lines join directly.
-        gap = ' ' if phrase and phrase[-1].isascii() and line[0].isascii() else ''
+        # A caption line break sits inside a phrase. Chinese and Japanese words on either
+        # side join directly, and words of a language written with spaces join with one.
+        before = next((c for c in reversed(phrase) if c.isalnum()), '')
+        after = next((c for c in line if c.isalnum()), '')
+        gap = ' ' if before and after and not (unspaced(before) or unspaced(after)) else ''
         phrase += gap+line
     return phrase if any(c.isalnum() for c in phrase) else ''
 
 
-def track(cues, fps, frames, speaker, pace, path):
+def foreign(cues):
+    """Letters that are neither Chinese nor English, in the order the cues first use them.
+
+    A voice reads other languages only when told which one: unnamed, it reads French or
+    German with English sounds, and returns no audio for Japanese, Korean or Russian.
+    """
+    letters = (c for _, _, text in cues for c in text
+               if c.isalpha() and not c.isascii() and not han(c) and not '\uff01' <= c <= '\uff5e')
+    return ''.join(dict.fromkeys(letters))
+
+
+def track(cues, fps, frames, speaker, pace, path, language=None):
     """Write the cues spoken in this voice as a mono WAV as long as the delivered cut.
 
     Cues are on the delivered frame grid and pace is the requested speaking rate, 1 being
-    the voice's own. Each cue is spoken from its start. A voice longer than its cue runs on
+    the voice's own. language is the code of the cues' language, or None to leave it to
+    the voice. Each cue is spoken from its start. A voice longer than its cue runs on
     into the silence before the next cue, and the cue is extended to cover it. One that
     still does not fit is requested faster, then compressed to fit. Returns the cues with
     their new ends and, for each cue that had to be hurried, its start frame and how much
@@ -162,9 +195,12 @@ def track(cues, fps, frames, speaker, pace, path):
     voice = np.zeros(total, np.float32)
     phrases = [spoken(text) for _, _, text in cues]
 
+    def say(phrase, rate):
+        return synthesize(phrase, speaker, rate, language)
+
     def first(phrase):
         try:
-            return synthesize(phrase, speaker, rate) if phrase else None
+            return say(phrase, rate) if phrase else None
         except Exception:
             return None
 
@@ -179,7 +215,7 @@ def track(cues, fps, frames, speaker, pace, path):
         limit = round(cues[i+1][0]*RATE/fps)-round(BREATH*RATE) if i+1 < len(cues) else total
         room = max(round(b*RATE/fps), limit)-start
         if sound is None:
-            sound = synthesize(phrase, speaker, rate)
+            sound = say(phrase, rate)
         hurry = len(sound)/room*rate/max(rate, pace)
         if hurry > HURRY:
             rushed.append(f'{float(a/fps):8.2f}s  {hurry:.2f}x  {phrase}')
@@ -189,7 +225,7 @@ def track(cues, fps, frames, speaker, pace, path):
         if len(sound) > room:
             # The voice reads faster more naturally than a recording compressed afterwards.
             if rate < 2 and len(sound) > room*1.05:
-                sound = synthesize(phrase, speaker, min(2, rate*len(sound)/room))
+                sound = say(phrase, min(2, rate*len(sound)/room))
             if len(sound) > room:
                 sound = tempo(sound, len(sound)/room, room)
         fade = min(240, len(sound)//2)

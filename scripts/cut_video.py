@@ -18,7 +18,8 @@ from pathlib import Path
 import numpy as np
 import background
 import voice
-from captions import STYLES, missing_glyphs, overlays, read_srt, remap, retime, strip_top, write_srt
+from captions import (STYLES, missing_glyphs, overlays, read_srt, remap, retime, strip_top,
+                      unshaped, write_srt)
 from color import grade
 
 
@@ -143,18 +144,29 @@ def render(args, work):
             raise ValueError('The edited SRT extends beyond the final frame.')
     if (args.burn_font or args.voice) and not cues:
         raise ValueError('Burn-in and a new voice require caption cues on the retained footage.')
+    if args.voice and not args.voice_language:
+        letters = voice.foreign(cues)
+        if letters:
+            raise ValueError('The cues use letters a voice reads as Chinese or English unless told '
+                             f'their language ({letters[:12]}); name it with --voice-language, '
+                             'zh-cn or en for Chinese or English cues.')
     if args.burn_font:
         missing = missing_glyphs(args.burn_font, args.font_index, cues)
         if missing:
             raise ValueError(f"{args.burn_font.name} has no glyph for {''.join(missing)}; "
                              'choose a font that covers every caption character.')
+        loose = unshaped(cues)
+        if loose:
+            raise ValueError(f"Burning in {' '.join(f'U+{ord(c):04X}' for c in loose[:8])} needs "
+                             "Pillow's Raqm text layout, which loads FriBiDi when run; make FriBiDi "
+                             'reachable or deliver the SRT alone.')
     if cues and speed != 1:
         cues = retime(cues, speed)
     if args.voice:
         # The voice is spoken for the delivered timeline, so at another speed it reads
         # faster or slower itself rather than being stretched afterwards.
         cues, faster = voice.track(cues, fps, delivered, args.voice,
-                                   args.voice_rate*float(speed), work/'voice.wav')
+                                   args.voice_rate*float(speed), work/'voice.wav', args.voice_language)
         if faster:
             print(f'Voice: {len(faster)} of {len(cues)} cues hurried to fit, at most '
                   f'{max(f for _, f in faster):.2f}x', file=sys.stderr)
@@ -289,6 +301,9 @@ def main():
                         help='Replace the sound with the cues spoken in this Doubao voice ID')
     parser.add_argument('--voice-rate', type=float,
                         help='Speaking rate of the new voice, 0.5 to 2 (default 1)')
+    parser.add_argument('--voice-language', choices=voice.LANGUAGES,
+                        help='Language of the cues for the voice, such as en or ja '
+                             '(default Chinese mixed with English)')
     parser.add_argument('--workdir', type=Path,
                         help='Scratch space, by default a hidden folder beside the output')
     args = parser.parse_args()
@@ -303,8 +318,8 @@ def main():
         parser.error('A new voice speaks the caption cues; supply --source-srt or --edited-srt.')
     if args.voice and not os.environ.get('DOUBAO_API_KEY'):
         parser.error('A new voice needs a Doubao Speech API key in DOUBAO_API_KEY.')
-    if args.voice_rate is not None and not args.voice:
-        parser.error('A voice rate needs --voice.')
+    if (args.voice_rate is not None or args.voice_language) and not args.voice:
+        parser.error('A voice rate or language needs --voice.')
     args.voice_rate = 1 if args.voice_rate is None else args.voice_rate
     if not .5 <= args.voice_rate <= 2:
         parser.error('Voice rate must be between 0.5 and 2.')

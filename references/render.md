@@ -1,6 +1,6 @@
 # Running the editor
 
-Use paths relative to the skill directory in these commands. Python 3, NumPy, FFmpeg 4.4 or later and FFprobe run the cut and color steps. Burn-in uses Pillow and a local font containing the caption characters. Candidate discovery additionally uses the Python package openai-whisper, PyTorch and a local multilingual Whisper checkpoint for Chinese. An existing word-timed transcript can also supply the candidate list. A new voice calls Doubao Speech over HTTPS with an API key in `DOUBAO_API_KEY`.
+Use paths relative to the skill directory in these commands. Python 3, NumPy, FFmpeg 4.4 or later and FFprobe run the cut and color steps. Burn-in uses Pillow and a local font containing the caption characters; Arabic, Hindi and Thai captions also need Pillow's Raqm layout ([languages](#languages)). Candidate discovery additionally uses the Python package openai-whisper, PyTorch and a local multilingual Whisper checkpoint for Chinese. An existing word-timed transcript can also supply the candidate list. A new voice calls Doubao Speech over HTTPS with an API key in `DOUBAO_API_KEY`.
 
 ## Find and review possible fillers
 
@@ -146,3 +146,54 @@ Each cue is one request. Its lines are joined into one sentence, and a cue witho
 `--voice-rate` is the requested pace, from 0.5 to 2 times the voice's own. With `--speed`, the voice is generated for the delivered timeline at the voice rate times the speed, so it reads faster instead of being compressed afterwards. Doubao Speech reads from half to double speed, so a product outside that range is held to it: a sentence is then compressed only where it would not fit its cue, and a slow one is not stretched. The track is brought to -16 LUFS integrated, with a limiter holding sample peaks under -1.5 dBFS, and delivered as mono AAC. The recorded sound is dropped entirely, music and room sound included, because it still carries the old voice.
 
 Four requests run at once, at two to three seconds each, so a ten-minute talk with 200 cues adds about three minutes, and every render requests them again. Preview a new voice on a short plan first. A failed connection, a stream that ends before its closing message, HTTP 429 and server errors are retried twice, and a request refused in the parallel pass, as by a key allowed fewer at once, is made again on its own. The request goes direct, or through `HTTPS_PROXY` when set, but not through the macOS system proxy, and uses the `certifi` certificate bundle when that package is installed.
+
+## Languages
+
+`--voice-language` names the language of the cues for the voice, sent as Doubao Speech's `explicit_language`. Without it a voice reads Chinese and English only, and a cue of bare digits such as `100%` is read in Chinese, even by an English voice; pass `en` for an English dub. Other text is not refused by the service: French, German or Dutch comes back read with English sounds, and Japanese, Korean, Russian, Arabic or Thai as no audio. The renderer therefore stops before any request when a cue has letters other than Chinese or English and no language is named. A code the service does not know is ignored the same way, so only these codes, each heard to work, are accepted:
+
+| Code | Language | Code | Language |
+| --- | --- | --- | --- |
+| `zh-cn` | Chinese, with English mixed in | `en` | English |
+| `ja` | Japanese | `ko` | Korean |
+| `es-mx` | Spanish (Mexico) | `pt-br` | Portuguese (Brazil) |
+| `fr` | French | `de` | German |
+| `it` | Italian | `ru` | Russian |
+| `id` | Indonesian | `vi` | Vietnamese |
+| `th` | Thai | `ar` | Arabic |
+| `hi` | Hindi | `tr` | Turkish |
+| `nl` | Dutch | `pl` | Polish |
+| `sv` | Swedish | `no` | Norwegian |
+| `fi` | Finnish | `cs` | Czech |
+| `hu` | Hungarian | `el` | Greek |
+| `ro` | Romanian | `fil` | Filipino |
+
+Each was tried with Vivi 2.0, and Japanese, Korean, French and Arabic with other 2.0 voices as well. `en` or `zh-cn` lets English or Chinese cues through that carry an accented name. Danish came back sounding German, and Ukrainian could not be told from Russian, so neither is offered. The English 2.0 voices, such as `en_male_tim_uranus_bigtts` and `en_female_dacey_uranus_bigtts`, read English with a native accent.
+
+```sh
+DOUBAO_API_KEY=... python3 scripts/cut_video.py input.MOV plan.json english.mp4 \
+  --edited-srt english-cues.srt --voice en_male_tim_uranus_bigtts --voice-language en \
+  --burn-font /System/Library/Fonts/HelveticaNeue.ttc --font-index 10
+DOUBAO_API_KEY=... python3 scripts/cut_video.py input.MOV plan.json japanese.mp4 \
+  --edited-srt japanese-cues.srt --voice zh_female_vv_uranus_bigtts --voice-language ja \
+  --burn-font "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc"
+```
+
+When a cue's lines are joined into one sentence, they join directly where Chinese or Japanese meets the break and with a space between words of other languages, so a word at the end of one line does not run into the next.
+
+At the voice's own pace English runs about three words a second, and Chinese and Japanese about five characters, so a translation of Chinese speech is usually the longer to say. The fit is reported the same way as for any voice: hurried cues are listed and those beyond 1.5× refused. A Japanese voice can give a kanji word its Chinese reading, as it did 字幕 at the start of one sentence, so compare the transcript of a Japanese dub word by word.
+
+A line of English or another language written with spaces fits up to about 46 characters at the smallest size the renderer accepts, fewer in capitals; 42 leaves margin. Fonts on macOS that carry each language:
+
+| Language | Font | `--font-index` |
+| --- | --- | --- |
+| Latin, Cyrillic and Greek letters, including Vietnamese and Romanian | `/System/Library/Fonts/HelveticaNeue.ttc`, Medium | 10 |
+| Japanese | `/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc`, Hiragino Sans | 0 |
+| Korean | `/System/Library/Fonts/AppleSDGothicNeo.ttc`, Medium | 2 |
+| Thai | `/System/Library/Fonts/ThonburiUI.ttc` | 0 |
+| Arabic | `/System/Library/Fonts/GeezaPro.ttc` | 0 |
+| Hindi | `/System/Library/Fonts/Kohinoor.ttc`, Kohinoor Devanagari Medium | 1 |
+| Chinese with English, French or German | `/System/Library/Fonts/STHeiti Medium.ttc`, Simplified | 1 |
+
+STHeiti lacks Korean and some Vietnamese and Romanian letters, and Hiragino draws shared kanji in Japanese forms. A bilingual cue needs one font with both scripts; `/System/Library/Fonts/Supplemental/Arial Unicode.ttf` covers most pairs. The glyph check names whatever a font lacks before encoding. A landscape caption strip holds three lines, so a bilingual cue there takes one line of each language.
+
+Arabic and Hebrew run right to left, Arabic with joined letters, and the vowel signs of Thai and Hindi attach to their consonants. Pillow places them only through its Raqm layout, which loads the FriBiDi library when run; without it, Arabic is drawn unjoined and left to right, and Thai and Hindi signs sit on dotted circles. The renderer refuses to burn such cues when Raqm is unavailable. `python3 -c "from PIL import features; print(features.check('raqm'))"` reports it. On macOS with Homebrew, `brew install fribidi` and run the renderer as `DYLD_FALLBACK_LIBRARY_PATH=$(brew --prefix)/lib python3 scripts/cut_video.py …` so Pillow finds it. macOS drops the variable on its way through `/usr/bin/python3`, an `env` shebang or `sh -c`, so call a Homebrew or python.org `python3` directly. Otherwise deliver the SRT without burn-in, for the platform's own captions.

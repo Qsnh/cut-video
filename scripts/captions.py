@@ -1,5 +1,6 @@
 """Read, remap and draw prepared SubRip cues on the final frame grid."""
 import re
+import unicodedata
 from fractions import Fraction
 from pathlib import Path
 
@@ -30,7 +31,9 @@ def read_srt(path, fps):
         start, end = map(frame, times.strip().split(' --> '))
         if end <= start or (result and result[-1][1] > start):
             raise ValueError(f"Empty or overlapping subtitle: {times}")
-        result.append((start, end, text))
+        # An accent stored as a separate mark is drawn beside its letter and escapes the
+        # language checks, so letters are composed with their marks.
+        result.append((start, end, unicodedata.normalize('NFC', text)))
     return result
 
 
@@ -80,6 +83,21 @@ def missing_glyphs(font_path, font_index, cues):
     # No font maps this private-use code point, so it draws the missing-glyph shape.
     blank = shape('\U0010fffd')
     return sorted({c for _, _, text in cues for c in text if not c.isspace() and shape(c) == blank})
+
+
+def unshaped(cues):
+    """Characters Pillow can only place with its Raqm layout: right-to-left and combining.
+
+    Without Raqm, Arabic letters are drawn unjoined and left to right, and the vowel signs
+    of Thai or Hindi land beside their consonants on dotted circles.
+    """
+    from PIL import features
+
+    if features.check('raqm'):
+        return []
+    return sorted({c for _, _, text in cues for c in text
+                   if unicodedata.bidirectional(c) in ('R', 'AL')
+                   or unicodedata.category(c) in ('Mn', 'Mc')})
 
 
 def strip_top(width, height):
